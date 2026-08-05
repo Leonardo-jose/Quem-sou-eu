@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Quem Sou Eu?</title></head>
+<body>
+  <h1>Quem Sou Eu?</h1>
+
+  <input id="nome" placeholder="Seu nome" />
+  <button id="btnCriar">Criar sala</button>
+
+  <p id="resultado"></p>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    document.getElementById("btnCriar").addEventListener("click", () => {
+      const nome = document.getElementById("nome").value;
+      socket.emit("criar-sala", nome);
+    });
+
+    socket.on("sala-criada", (codigo) => {
+      document.getElementById("resultado").textContent = "Sua sala: " + codigo;
+    });
+  </script>
+</body>
+</html>
