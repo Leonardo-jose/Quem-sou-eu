@@ -5,32 +5,55 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-const salas = {}; // Objeto para armazenar as salas e seus jogadores
+const salas = {};
 
 app.use(express.static("public"));
 
 io.on("connection", (socket) => {
   console.log("Alguém conectou! ID:", socket.id);
 
-  // Avisa TODO MUNDO (inclusive quem acabou de entrar) quantas pessoas estão conectadas
   io.emit("total-conectados", io.engine.clientsCount);
+
+  socket.on("criar-sala", (nomeDoJogador) => {
+    const codigo = gerarCodigoSala();
+
+    salas[codigo] = {
+      jogadores: [{ id: socket.id, nome: nomeDoJogador }],
+    };
+
+    socket.join(codigo);
+    socket.data.codigo = codigo; // NOVO: guarda a sala junto com esse socket
+
+    socket.emit("sala-criada", codigo);
+    io.to(codigo).emit("lista-jogadores-atualizada", salas[codigo].jogadores);
+  });
+
+  socket.on("entrar-sala", ({ codigo, nome }) => {
+    const sala = salas[codigo];
+
+    if (!sala) {
+      socket.emit("erro", "Sala não encontrada. Confira o código.");
+      return;
+    }
+
+    sala.jogadores.push({ id: socket.id, nome: nome });
+    socket.join(codigo);
+    socket.data.codigo = codigo; // NOVO: guarda a sala junto com esse socket
+
+    io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
+  });
 
   socket.on("disconnect", () => {
     console.log("Alguém saiu:", socket.id);
     io.emit("total-conectados", io.engine.clientsCount);
+
+    const codigo = socket.data.codigo;
+    const sala = salas[codigo];
+    if (!sala) return; // esse socket nunca chegou a entrar numa sala
+
+    sala.jogadores = sala.jogadores.filter((jogador) => jogador.id !== socket.id);
+    io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
   });
-  socket.on("criar-sala", (nomeDoJogador) => {
-  const codigo = gerarCodigoSala();
-
-  salas[codigo] = {
-    jogadores: [{ id: socket.id, nome: nomeDoJogador }],
-  };
-
-  socket.join(codigo);
-
-  socket.emit("sala-criada", codigo);
-  console.log(`Sala ${codigo} criada por ${nomeDoJogador}`);
-});
 });
 
 server.listen(3000, () => {
@@ -45,6 +68,6 @@ function gerarCodigoSala() {
     for (let i = 0; i < 4; i++) {
       codigo += caracteres[Math.floor(Math.random() * caracteres.length)];
     }
-  } while (salas[codigo]); // se já existe uma sala com esse código, sorteia de novo
+  } while (salas[codigo]);
   return codigo;
 }

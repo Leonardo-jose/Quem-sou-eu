@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html>
-<head><title>Quem Sou Eu?</title></head>
+
+<head>
+  <title>Quem Sou Eu?</title>
+</head>
+
 <body>
   <h1>Quem Sou Eu?</h1>
 
@@ -8,6 +12,13 @@
   <button id="btnCriar">Criar sala</button>
 
   <p id="resultado"></p>
+
+  <h2>Ou entrar numa sala existente:</h2>
+  <input id="codigoSala" placeholder="Código da sala" />
+  <button id="btnEntrar">Entrar</button>
+
+  <h2>Jogadores na sala:</h2>
+  <ul id="listaJogadores"></ul>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -21,6 +32,27 @@
     socket.on("sala-criada", (codigo) => {
       document.getElementById("resultado").textContent = "Sua sala: " + codigo;
     });
+
+    document.getElementById("btnEntrar").addEventListener("click", () => {
+      const nome = document.getElementById("nome").value;
+      const codigo = document.getElementById("codigoSala").value.toUpperCase();
+      socket.emit("entrar-sala", { codigo, nome });
+    });
+
+    socket.on("lista-jogadores-atualizada", (jogadores) => {
+      const lista = document.getElementById("listaJogadores");
+      lista.innerHTML = "";
+      jogadores.forEach((jogador) => {
+        const item = document.createElement("li");
+        item.textContent = jogador.nome;
+        lista.appendChild(item);
+      });
+    });
+
+    socket.on("erro", (mensagem) => {
+      alert(mensagem);
+    });
   </script>
 </body>
+
 </html>
