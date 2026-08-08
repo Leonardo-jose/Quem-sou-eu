@@ -20,6 +20,11 @@
   <h2>Jogadores na sala:</h2>
   <ul id="listaJogadores"></ul>
 
+  <button id="btnIniciar">Iniciar jogo</button>
+
+  <h2>Personagens dos outros jogadores:</h2>
+  <ul id="listaEstadoJogo"></ul>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
@@ -52,7 +57,26 @@
     socket.on("erro", (mensagem) => {
       alert(mensagem);
     });
+    document.getElementById("btnIniciar").addEventListener("click", () => {
+      socket.emit("iniciar-jogo");
+    });
+
+    socket.on("estado-do-jogo", (jogadores) => {
+      const lista = document.getElementById("listaEstadoJogo");
+      lista.innerHTML = "";
+
+      jogadores.forEach((jogador) => {
+        const item = document.createElement("li");
+
+        if (jogador.souEu) {
+          item.textContent = `${jogador.nome} (você) — identidade OCULTA`;
+        } else {
+          item.textContent = `${jogador.nome} é: ${jogador.identidade}`;
+        }
+
+        lista.appendChild(item);
+      });
+    });
   </script>
 </body>
-
 </html>
