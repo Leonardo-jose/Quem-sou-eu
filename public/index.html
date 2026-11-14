@@ -77,9 +77,27 @@
         const item = document.createElement("li");
 
         if (jogador.souEu) {
-          item.textContent = `${jogador.nome} (você) — identidade OCULTA`;
+          // eu mesmo: só vejo a identidade se já fui revelado
+          item.textContent = jogador.revelado
+            ? `${jogador.nome} (você) — você era: ${jogador.identidade} 🎉`
+            : `${jogador.nome} (você) — identidade OCULTA`;
         } else {
           item.textContent = `${jogador.nome} é: ${jogador.identidade}`;
+
+          if (jogador.revelado) {
+            item.textContent += " ✔ revelado";
+          } else {
+            // botão só aparece na linha dos OUTROS jogadores ainda não revelados
+            const botao = document.createElement("button");
+            botao.textContent = "Revelar";
+            botao.addEventListener("click", () => {
+              if (confirm(`Confirma que ${jogador.nome} acertou quem é?`)) {
+                socket.emit("revelar-jogador", jogador.id);
+              }
+            });
+            item.appendChild(document.createTextNode(" "));
+            item.appendChild(botao);
+          }
         }
 
         lista.appendChild(item);

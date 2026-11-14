@@ -20,6 +20,7 @@ io.on("connection", (socket) => {
     salas[codigo] = {
       jogadores: [{ id: socket.id, nome: nomeDoJogador }],
       donoId: socket.id,
+      jogoIniciado: false, // NOVO
     };
 
     socket.join(codigo);
@@ -38,6 +39,12 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // NOVO: não deixa entrar depois que o jogo começou
+    if (sala.jogoIniciado) {
+      socket.emit("erro", "Essa sala já começou o jogo.");
+      return;
+    }
+
     sala.jogadores.push({ id: socket.id, nome: nome });
     socket.join(codigo);
     socket.data.codigo = codigo;
@@ -46,7 +53,6 @@ io.on("connection", (socket) => {
     enviarProgressoDosNomes(sala, codigo);
   });
 
-  // NOVO: cada jogador escreve o nome que OUTRO vai ter que adivinhar
   socket.on("enviar-nome", (texto) => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
@@ -61,7 +67,7 @@ io.on("connection", (socket) => {
     const jogador = sala.jogadores.find((j) => j.id === socket.id);
     if (!jogador) return;
 
-    jogador.nomeEscolhido = nome; // enviar de novo sobrescreve o anterior
+    jogador.nomeEscolhido = nome;
     enviarProgressoDosNomes(sala, codigo);
   });
 
@@ -88,6 +94,28 @@ io.on("connection", (socket) => {
     }
 
     distribuirNomes(sala);
+    sala.jogoIniciado = true; // NOVO
+    enviarEstadoDoJogo(sala, codigo);
+  });
+
+  // NOVO: um jogador confirma que OUTRO acertou quem é
+  socket.on("revelar-jogador", (alvoId) => {
+    const codigo = socket.data.codigo;
+    const sala = salas[codigo];
+    if (!sala || !sala.jogoIniciado) return;
+
+    const alvo = sala.jogadores.find((j) => j.id === alvoId);
+    if (!alvo) return;
+
+    // a regra principal: ninguém revela o próprio personagem
+    if (alvo.id === socket.id) {
+      socket.emit("erro", "Você não pode revelar o seu próprio personagem.");
+      return;
+    }
+
+    if (alvo.revelado) return; // já estava revelado
+
+    alvo.revelado = true;
     enviarEstadoDoJogo(sala, codigo);
   });
 
@@ -121,7 +149,6 @@ function gerarCodigoSala() {
   return codigo;
 }
 
-// NOVO: a "roda" — cada jogador recebe o nome escrito pelo próximo da fila
 function distribuirNomes(sala) {
   const roda = embaralhar(sala.jogadores);
   const n = roda.length;
@@ -129,10 +156,10 @@ function distribuirNomes(sala) {
   roda.forEach((jogador, i) => {
     const proximo = roda[(i + 1) % n];
     jogador.identidade = proximo.nomeEscolhido;
+    jogador.revelado = false; // NOVO: todo mundo começa não revelado
   });
 }
 
-// NOVO: avisa a sala quantos já enviaram (sem revelar os nomes!)
 function enviarProgressoDosNomes(sala, codigo) {
   const enviados = sala.jogadores.filter((j) => j.nomeEscolhido).length;
   io.to(codigo).emit("progresso-nomes", { enviados, total: sala.jogadores.length });
@@ -141,9 +168,12 @@ function enviarProgressoDosNomes(sala, codigo) {
 function enviarEstadoDoJogo(sala, codigo) {
   sala.jogadores.forEach((jogadorAtual) => {
     const visaoDesseJogador = sala.jogadores.map((j) => ({
+      id: j.id, // NOVO: o cliente precisa disso pra dizer quem quer revelar
       nome: j.nome,
-      identidade: j.id === jogadorAtual.id ? null : j.identidade,
+      // NOVO: esconde só se for o próprio jogador E ele ainda não foi revelado
+      identidade: (j.id === jogadorAtual.id && !j.revelado) ? null : j.identidade,
       souEu: j.id === jogadorAtual.id,
+      revelado: !!j.revelado, // NOVO
     }));
 
     io.to(jogadorAtual.id).emit("estado-do-jogo", visaoDesseJogador);
