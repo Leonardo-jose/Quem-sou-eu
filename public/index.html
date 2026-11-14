@@ -33,6 +33,36 @@
   <script>
     const socket = io();
 
+    // ---- NOVO: sessão que sobrevive ao F5 ----
+    function lerSessao() {
+      try {
+        return JSON.parse(sessionStorage.getItem("sessao"));
+      } catch {
+        return null;
+      }
+    }
+
+    // O evento "connect" dispara toda vez que a conexão se estabelece:
+    // na primeira carga, depois de um F5 e depois de uma queda de internet.
+    socket.on("connect", () => {
+      const sessao = lerSessao();
+      if (sessao) socket.emit("reconectar", sessao);
+    });
+
+    socket.on("sessao-iniciada", ({ token, codigo }) => {
+      sessionStorage.setItem("sessao", JSON.stringify({ token, codigo }));
+      document.getElementById("resultado").textContent = "Sua sala: " + codigo;
+    });
+
+    socket.on("sessao-invalida", () => {
+      sessionStorage.removeItem("sessao");
+    });
+
+    socket.on("sala-recuperada", ({ codigo }) => {
+      document.getElementById("resultado").textContent = "Sua sala: " + codigo;
+    });
+    // ------------------------------------------
+
     document.getElementById("btnCriar").addEventListener("click", () => {
       const nome = document.getElementById("nome").value;
       socket.emit("criar-sala", nome);
@@ -53,7 +83,9 @@
       lista.innerHTML = "";
       jogadores.forEach((jogador) => {
         const item = document.createElement("li");
-        item.textContent = jogador.nome;
+        item.textContent = jogador.conectado
+          ? jogador.nome
+          : `${jogador.nome} (reconectando…)`;
         lista.appendChild(item);
       });
     });
@@ -84,13 +116,14 @@
 
       jogadores.forEach((jogador) => {
         const item = document.createElement("li");
+        const sufixo = jogador.conectado ? "" : " (reconectando…)";
 
         if (jogador.souEu) {
           item.textContent = jogador.revelado
             ? `${jogador.nome} (você) — você era: ${jogador.identidade} 🎉`
             : `${jogador.nome} (você) — identidade OCULTA`;
         } else {
-          item.textContent = `${jogador.nome} é: ${jogador.identidade}`;
+          item.textContent = `${jogador.nome} é: ${jogador.identidade}${sufixo}`;
 
           if (jogador.revelado) {
             item.textContent += " ✔ revelado";
@@ -111,13 +144,11 @@
       });
     });
 
-    // NOVO: limpa a tela de jogo quando o dono reinicia a rodada
     socket.on("voltou-ao-lobby", () => {
       document.getElementById("listaEstadoJogo").innerHTML = "";
       document.getElementById("nomeParaAdivinhar").value = "";
     });
 
-    // NOVO: mensagens informativas do servidor (ex: troca de dono)
     socket.on("aviso", (mensagem) => {
       document.getElementById("aviso").textContent = mensagem;
     });

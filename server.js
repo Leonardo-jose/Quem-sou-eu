@@ -1,24 +1,30 @@
 const express = require("express");
 const http = require("http");
+const crypto = require("crypto");
 const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-const salas = {};
+
+// Sem protótipo: códigos como "constructor" não encontram "salas" falsas
+const salas = Object.create(null);
+
+// Quanto tempo esperamos a pessoa voltar antes de removê-la da sala
+// (para testar mais rápido, troque por 15 * 1000)
+const TEMPO_DE_RECONEXAO_MS = 60 * 1000;
 
 app.use(express.static("public"));
 
 io.on("connection", (socket) => {
   console.log("Alguém conectou! ID:", socket.id);
 
-  io.emit("total-conectados", io.engine.clientsCount);
-
   socket.on("criar-sala", (nomeDoJogador) => {
     const codigo = gerarCodigoSala();
+    const jogador = criarJogador(socket.id, nomeDoJogador);
 
     salas[codigo] = {
-      jogadores: [{ id: socket.id, nome: nomeDoJogador }],
+      jogadores: [jogador],
       donoId: socket.id,
       jogoIniciado: false,
     };
@@ -27,11 +33,14 @@ io.on("connection", (socket) => {
     socket.data.codigo = codigo;
 
     socket.emit("sala-criada", codigo);
-    io.to(codigo).emit("lista-jogadores-atualizada", salas[codigo].jogadores);
+    // NOVO: o token vai SÓ para quem criou (socket.emit), nunca para a sala
+    socket.emit("sessao-iniciada", { token: jogador.token, codigo });
+    io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(salas[codigo]));
     enviarProgressoDosNomes(salas[codigo], codigo);
   });
 
-  socket.on("entrar-sala", ({ codigo, nome }) => {
+  socket.on("entrar-sala", (dados) => {
+    const { codigo, nome } = dados || {};
     const sala = salas[codigo];
 
     if (!sala) {
@@ -44,12 +53,46 @@ io.on("connection", (socket) => {
       return;
     }
 
-    sala.jogadores.push({ id: socket.id, nome: nome });
+    const jogador = criarJogador(socket.id, nome);
+    sala.jogadores.push(jogador);
     socket.join(codigo);
     socket.data.codigo = codigo;
 
-    io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
+    socket.emit("sessao-iniciada", { token: jogador.token, codigo });
+    io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(sala));
     enviarProgressoDosNomes(sala, codigo);
+  });
+
+  // NOVO: uma conexão nova diz "eu sou o jogador do token X da sala Y"
+  socket.on("reconectar", (dados) => {
+    const { token, codigo } = dados || {};
+    const sala = salas[codigo];
+    const jogador = sala && sala.jogadores.find((j) => j.token === token);
+
+    if (!jogador) {
+      socket.emit("sessao-invalida");
+      return;
+    }
+
+    // a pessoa voltou a tempo: cancela a remoção agendada
+    clearTimeout(jogador.timerRemocao);
+    jogador.timerRemocao = null;
+
+    // troca o id antigo pelo da conexão nova
+    const idAntigo = jogador.id;
+    jogador.id = socket.id;
+    jogador.conectado = true;
+    if (sala.donoId === idAntigo) sala.donoId = socket.id;
+
+    socket.join(codigo);
+    socket.data.codigo = codigo;
+
+    console.log(`${jogador.nome} reconectou na sala ${codigo}`);
+
+    socket.emit("sala-recuperada", { codigo });
+    io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(sala));
+    enviarProgressoDosNomes(sala, codigo);
+    if (sala.jogoIniciado) enviarEstadoDoJogo(sala, codigo);
   });
 
   socket.on("enviar-nome", (texto) => {
@@ -116,7 +159,6 @@ io.on("connection", (socket) => {
     enviarEstadoDoJogo(sala, codigo);
   });
 
-  // NOVO: o dono reinicia a rodada na mesma sala
   socket.on("jogar-de-novo", () => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
@@ -138,43 +180,82 @@ io.on("connection", (socket) => {
     enviarProgressoDosNomes(sala, codigo);
   });
 
+  // MUDOU: em vez de remover na hora, marca como desconectado e agenda a remoção
   socket.on("disconnect", () => {
     console.log("Alguém saiu:", socket.id);
-    io.emit("total-conectados", io.engine.clientsCount);
 
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
     if (!sala) return;
 
-    sala.jogadores = sala.jogadores.filter((jogador) => jogador.id !== socket.id);
+    // Se a pessoa já reconectou com outra conexão, este id antigo não está
+    // mais na sala, e não achar ninguém aqui é o comportamento correto.
+    const jogador = sala.jogadores.find((j) => j.id === socket.id);
+    if (!jogador) return;
 
-    // NOVO: sala vazia some da memória
-    if (sala.jogadores.length === 0) {
-      delete salas[codigo];
-      console.log(`Sala ${codigo} removida (vazia)`);
-      return;
-    }
+    jogador.conectado = false;
+    console.log(`${jogador.nome} caiu; aguardando reconexão...`);
 
-    // NOVO: se o dono saiu, o primeiro da lista assume
-    if (sala.donoId === socket.id) {
-      const novoDono = sala.jogadores[0];
-      sala.donoId = novoDono.id;
-      io.to(codigo).emit("aviso", `${novoDono.nome} agora é o dono da sala.`);
-    }
+    io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(sala));
+    if (sala.jogoIniciado) enviarEstadoDoJogo(sala, codigo);
 
-    io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
-    enviarProgressoDosNomes(sala, codigo);
-
-    // NOVO: se estava no meio da partida, atualiza a tela de jogo dos outros
-    if (sala.jogoIniciado) {
-      enviarEstadoDoJogo(sala, codigo);
-    }
+    jogador.timerRemocao = setTimeout(() => {
+      removerJogador(codigo, jogador.token);
+    }, TEMPO_DE_RECONEXAO_MS);
   });
 });
 
 server.listen(3000, () => {
   console.log("Servidor rodando em http://localhost:3000");
 });
+
+function criarJogador(id, nome) {
+  return {
+    id,
+    token: crypto.randomUUID(), // código longo e imprevisível
+    nome,
+    conectado: true,
+    timerRemocao: null,
+  };
+}
+
+// NOVO: o que pode sair pela rede. Sem token, sem identidade, sem nomeEscolhido.
+function listaPublica(sala) {
+  return sala.jogadores.map((j) => ({
+    id: j.id,
+    nome: j.nome,
+    conectado: j.conectado,
+  }));
+}
+
+// NOVO: a lógica que antes ficava dentro do disconnect
+function removerJogador(codigo, token) {
+  const sala = salas[codigo];
+  if (!sala) return;
+
+  const jogador = sala.jogadores.find((j) => j.token === token);
+  if (!jogador || jogador.conectado) return; // voltou: não remove
+
+  console.log(`${jogador.nome} não voltou a tempo e foi removido da sala ${codigo}`);
+  sala.jogadores = sala.jogadores.filter((j) => j.token !== token);
+
+  if (sala.jogadores.length === 0) {
+    delete salas[codigo];
+    console.log(`Sala ${codigo} removida (vazia)`);
+    return;
+  }
+
+  if (sala.donoId === jogador.id) {
+    // prefere quem está conectado agora
+    const novoDono = sala.jogadores.find((j) => j.conectado) || sala.jogadores[0];
+    sala.donoId = novoDono.id;
+    io.to(codigo).emit("aviso", `${novoDono.nome} agora é o dono da sala.`);
+  }
+
+  io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(sala));
+  enviarProgressoDosNomes(sala, codigo);
+  if (sala.jogoIniciado) enviarEstadoDoJogo(sala, codigo);
+}
 
 function gerarCodigoSala() {
   const caracteres = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -212,6 +293,7 @@ function enviarEstadoDoJogo(sala, codigo) {
       identidade: (j.id === jogadorAtual.id && !j.revelado) ? null : j.identidade,
       souEu: j.id === jogadorAtual.id,
       revelado: !!j.revelado,
+      conectado: j.conectado, // NOVO
     }));
 
     io.to(jogadorAtual.id).emit("estado-do-jogo", visaoDesseJogador);
