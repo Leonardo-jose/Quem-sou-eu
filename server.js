@@ -20,7 +20,7 @@ io.on("connection", (socket) => {
     salas[codigo] = {
       jogadores: [{ id: socket.id, nome: nomeDoJogador }],
       donoId: socket.id,
-      jogoIniciado: false, // NOVO
+      jogoIniciado: false,
     };
 
     socket.join(codigo);
@@ -39,7 +39,6 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // NOVO: não deixa entrar depois que o jogo começou
     if (sala.jogoIniciado) {
       socket.emit("erro", "Essa sala já começou o jogo.");
       return;
@@ -94,11 +93,10 @@ io.on("connection", (socket) => {
     }
 
     distribuirNomes(sala);
-    sala.jogoIniciado = true; // NOVO
+    sala.jogoIniciado = true;
     enviarEstadoDoJogo(sala, codigo);
   });
 
-  // NOVO: um jogador confirma que OUTRO acertou quem é
   socket.on("revelar-jogador", (alvoId) => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
@@ -107,16 +105,37 @@ io.on("connection", (socket) => {
     const alvo = sala.jogadores.find((j) => j.id === alvoId);
     if (!alvo) return;
 
-    // a regra principal: ninguém revela o próprio personagem
     if (alvo.id === socket.id) {
       socket.emit("erro", "Você não pode revelar o seu próprio personagem.");
       return;
     }
 
-    if (alvo.revelado) return; // já estava revelado
+    if (alvo.revelado) return;
 
     alvo.revelado = true;
     enviarEstadoDoJogo(sala, codigo);
+  });
+
+  // NOVO: o dono reinicia a rodada na mesma sala
+  socket.on("jogar-de-novo", () => {
+    const codigo = socket.data.codigo;
+    const sala = salas[codigo];
+    if (!sala || !sala.jogoIniciado) return;
+
+    if (socket.id !== sala.donoId) {
+      socket.emit("erro", "Só o dono da sala pode reiniciar a rodada.");
+      return;
+    }
+
+    sala.jogoIniciado = false;
+    sala.jogadores.forEach((j) => {
+      delete j.nomeEscolhido;
+      delete j.identidade;
+      delete j.revelado;
+    });
+
+    io.to(codigo).emit("voltou-ao-lobby");
+    enviarProgressoDosNomes(sala, codigo);
   });
 
   socket.on("disconnect", () => {
@@ -128,8 +147,28 @@ io.on("connection", (socket) => {
     if (!sala) return;
 
     sala.jogadores = sala.jogadores.filter((jogador) => jogador.id !== socket.id);
+
+    // NOVO: sala vazia some da memória
+    if (sala.jogadores.length === 0) {
+      delete salas[codigo];
+      console.log(`Sala ${codigo} removida (vazia)`);
+      return;
+    }
+
+    // NOVO: se o dono saiu, o primeiro da lista assume
+    if (sala.donoId === socket.id) {
+      const novoDono = sala.jogadores[0];
+      sala.donoId = novoDono.id;
+      io.to(codigo).emit("aviso", `${novoDono.nome} agora é o dono da sala.`);
+    }
+
     io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
     enviarProgressoDosNomes(sala, codigo);
+
+    // NOVO: se estava no meio da partida, atualiza a tela de jogo dos outros
+    if (sala.jogoIniciado) {
+      enviarEstadoDoJogo(sala, codigo);
+    }
   });
 });
 
@@ -156,7 +195,7 @@ function distribuirNomes(sala) {
   roda.forEach((jogador, i) => {
     const proximo = roda[(i + 1) % n];
     jogador.identidade = proximo.nomeEscolhido;
-    jogador.revelado = false; // NOVO: todo mundo começa não revelado
+    jogador.revelado = false;
   });
 }
 
@@ -168,12 +207,11 @@ function enviarProgressoDosNomes(sala, codigo) {
 function enviarEstadoDoJogo(sala, codigo) {
   sala.jogadores.forEach((jogadorAtual) => {
     const visaoDesseJogador = sala.jogadores.map((j) => ({
-      id: j.id, // NOVO: o cliente precisa disso pra dizer quem quer revelar
+      id: j.id,
       nome: j.nome,
-      // NOVO: esconde só se for o próprio jogador E ele ainda não foi revelado
       identidade: (j.id === jogadorAtual.id && !j.revelado) ? null : j.identidade,
       souEu: j.id === jogadorAtual.id,
-      revelado: !!j.revelado, // NOVO
+      revelado: !!j.revelado,
     }));
 
     io.to(jogadorAtual.id).emit("estado-do-jogo", visaoDesseJogador);

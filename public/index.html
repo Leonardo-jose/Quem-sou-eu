@@ -8,6 +8,7 @@
   <button id="btnCriar">Criar sala</button>
 
   <p id="resultado"></p>
+  <p id="aviso"></p>
 
   <h2>Ou entrar numa sala existente:</h2>
   <input id="codigoSala" placeholder="Código da sala" />
@@ -25,6 +26,8 @@
 
   <h2>Personagens dos outros jogadores:</h2>
   <ul id="listaEstadoJogo"></ul>
+
+  <button id="btnJogarDeNovo">Jogar de novo</button>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
@@ -69,6 +72,12 @@
       socket.emit("iniciar-jogo");
     });
 
+    document.getElementById("btnJogarDeNovo").addEventListener("click", () => {
+      if (confirm("Reiniciar a rodada para todos?")) {
+        socket.emit("jogar-de-novo");
+      }
+    });
+
     socket.on("estado-do-jogo", (jogadores) => {
       const lista = document.getElementById("listaEstadoJogo");
       lista.innerHTML = "";
@@ -77,7 +86,6 @@
         const item = document.createElement("li");
 
         if (jogador.souEu) {
-          // eu mesmo: só vejo a identidade se já fui revelado
           item.textContent = jogador.revelado
             ? `${jogador.nome} (você) — você era: ${jogador.identidade} 🎉`
             : `${jogador.nome} (você) — identidade OCULTA`;
@@ -87,7 +95,6 @@
           if (jogador.revelado) {
             item.textContent += " ✔ revelado";
           } else {
-            // botão só aparece na linha dos OUTROS jogadores ainda não revelados
             const botao = document.createElement("button");
             botao.textContent = "Revelar";
             botao.addEventListener("click", () => {
@@ -102,6 +109,17 @@
 
         lista.appendChild(item);
       });
+    });
+
+    // NOVO: limpa a tela de jogo quando o dono reinicia a rodada
+    socket.on("voltou-ao-lobby", () => {
+      document.getElementById("listaEstadoJogo").innerHTML = "";
+      document.getElementById("nomeParaAdivinhar").value = "";
+    });
+
+    // NOVO: mensagens informativas do servidor (ex: troca de dono)
+    socket.on("aviso", (mensagem) => {
+      document.getElementById("aviso").textContent = mensagem;
     });
 
     socket.on("erro", (mensagem) => {
