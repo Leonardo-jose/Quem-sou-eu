@@ -1,10 +1,6 @@
 <!DOCTYPE html>
 <html>
-
-<head>
-  <title>Quem Sou Eu?</title>
-</head>
-
+<head><title>Quem Sou Eu?</title></head>
 <body>
   <h1>Quem Sou Eu?</h1>
 
@@ -19,6 +15,11 @@
 
   <h2>Jogadores na sala:</h2>
   <ul id="listaJogadores"></ul>
+
+  <h2>Escolha um nome para alguém adivinhar:</h2>
+  <input id="nomeParaAdivinhar" placeholder="Ex: Naruto, Pelé, Rainha Elizabeth" />
+  <button id="btnEnviarNome">Enviar nome</button>
+  <p id="progressoNomes"></p>
 
   <button id="btnIniciar">Iniciar jogo</button>
 
@@ -54,9 +55,16 @@
       });
     });
 
-    socket.on("erro", (mensagem) => {
-      alert(mensagem);
+    document.getElementById("btnEnviarNome").addEventListener("click", () => {
+      const texto = document.getElementById("nomeParaAdivinhar").value;
+      socket.emit("enviar-nome", texto);
     });
+
+    socket.on("progresso-nomes", ({ enviados, total }) => {
+      document.getElementById("progressoNomes").textContent =
+        `Nomes enviados: ${enviados} de ${total}`;
+    });
+
     document.getElementById("btnIniciar").addEventListener("click", () => {
       socket.emit("iniciar-jogo");
     });
@@ -76,6 +84,10 @@
 
         lista.appendChild(item);
       });
+    });
+
+    socket.on("erro", (mensagem) => {
+      alert(mensagem);
     });
   </script>
 </body>

@@ -1,7 +1,6 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { buscarPessoasFamosas } = require("./personagens");
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +27,7 @@ io.on("connection", (socket) => {
 
     socket.emit("sala-criada", codigo);
     io.to(codigo).emit("lista-jogadores-atualizada", salas[codigo].jogadores);
+    enviarProgressoDosNomes(salas[codigo], codigo);
   });
 
   socket.on("entrar-sala", ({ codigo, nome }) => {
@@ -43,9 +43,29 @@ io.on("connection", (socket) => {
     socket.data.codigo = codigo;
 
     io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
+    enviarProgressoDosNomes(sala, codigo);
   });
 
-  socket.on("iniciar-jogo", async () => {
+  // NOVO: cada jogador escreve o nome que OUTRO vai ter que adivinhar
+  socket.on("enviar-nome", (texto) => {
+    const codigo = socket.data.codigo;
+    const sala = salas[codigo];
+    if (!sala) return;
+
+    const nome = String(texto || "").trim().slice(0, 40);
+    if (!nome) {
+      socket.emit("erro", "Escreva um nome antes de enviar.");
+      return;
+    }
+
+    const jogador = sala.jogadores.find((j) => j.id === socket.id);
+    if (!jogador) return;
+
+    jogador.nomeEscolhido = nome; // enviar de novo sobrescreve o anterior
+    enviarProgressoDosNomes(sala, codigo);
+  });
+
+  socket.on("iniciar-jogo", () => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
     if (!sala) return;
@@ -55,7 +75,19 @@ io.on("connection", (socket) => {
       return;
     }
 
-    await sortearPersonagens(sala);
+    if (sala.jogadores.length < 2) {
+      socket.emit("erro", "São necessários pelo menos 2 jogadores.");
+      return;
+    }
+
+    const semNome = sala.jogadores.filter((j) => !j.nomeEscolhido);
+    if (semNome.length > 0) {
+      const nomes = semNome.map((j) => j.nome).join(", ");
+      socket.emit("erro", `Ainda faltam nomes de: ${nomes}`);
+      return;
+    }
+
+    distribuirNomes(sala);
     enviarEstadoDoJogo(sala, codigo);
   });
 
@@ -69,6 +101,7 @@ io.on("connection", (socket) => {
 
     sala.jogadores = sala.jogadores.filter((jogador) => jogador.id !== socket.id);
     io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
+    enviarProgressoDosNomes(sala, codigo);
   });
 });
 
@@ -88,14 +121,21 @@ function gerarCodigoSala() {
   return codigo;
 }
 
-async function sortearPersonagens(sala) {
-  const quantidadeJogadores = sala.jogadores.length;
-  const nomes = await buscarPessoasFamosas(quantidadeJogadores);
-  const embaralhados = embaralhar(nomes);
+// NOVO: a "roda" — cada jogador recebe o nome escrito pelo próximo da fila
+function distribuirNomes(sala) {
+  const roda = embaralhar(sala.jogadores);
+  const n = roda.length;
 
-  sala.jogadores.forEach((jogador, index) => {
-    jogador.identidade = embaralhados[index];
+  roda.forEach((jogador, i) => {
+    const proximo = roda[(i + 1) % n];
+    jogador.identidade = proximo.nomeEscolhido;
   });
+}
+
+// NOVO: avisa a sala quantos já enviaram (sem revelar os nomes!)
+function enviarProgressoDosNomes(sala, codigo) {
+  const enviados = sala.jogadores.filter((j) => j.nomeEscolhido).length;
+  io.to(codigo).emit("progresso-nomes", { enviados, total: sala.jogadores.length });
 }
 
 function enviarEstadoDoJogo(sala, codigo) {
