@@ -1,15 +1,12 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const { buscarPessoasFamosas } = require("./personagens");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 const salas = {};
-const PERSONAGENS_TESTE = [
-  "Albert Einstein", "Beyoncé", "Pelé", "Cleópatra",
-  "Michael Jackson", "Frida Kahlo", "Nelson Mandela", "Freddie Mercury",
-];
 
 app.use(express.static("public"));
 
@@ -23,7 +20,7 @@ io.on("connection", (socket) => {
 
     salas[codigo] = {
       jogadores: [{ id: socket.id, nome: nomeDoJogador }],
-      donoId: socket.id, // NOVO: guarda quem criou a sala
+      donoId: socket.id,
     };
 
     socket.join(codigo);
@@ -43,12 +40,12 @@ io.on("connection", (socket) => {
 
     sala.jogadores.push({ id: socket.id, nome: nome });
     socket.join(codigo);
-    socket.data.codigo = codigo; // NOVO: guarda a sala junto com esse socket
+    socket.data.codigo = codigo;
 
     io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
   });
 
-  socket.on("iniciar-jogo", () => {
+  socket.on("iniciar-jogo", async () => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
     if (!sala) return;
@@ -58,7 +55,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    sortearPersonagens(sala);
+    await sortearPersonagens(sala);
     enviarEstadoDoJogo(sala, codigo);
   });
 
@@ -68,7 +65,7 @@ io.on("connection", (socket) => {
 
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
-    if (!sala) return; // esse socket nunca chegou a entrar numa sala
+    if (!sala) return;
 
     sala.jogadores = sala.jogadores.filter((jogador) => jogador.id !== socket.id);
     io.to(codigo).emit("lista-jogadores-atualizada", sala.jogadores);
@@ -91,22 +88,20 @@ function gerarCodigoSala() {
   return codigo;
 }
 
-function sortearPersonagens(sala) {
-  const embaralhados = embaralhar(PERSONAGENS_TESTE);
+async function sortearPersonagens(sala) {
   const quantidadeJogadores = sala.jogadores.length;
+  const nomes = await buscarPessoasFamosas(quantidadeJogadores);
+  const embaralhados = embaralhar(nomes);
 
   sala.jogadores.forEach((jogador, index) => {
     jogador.identidade = embaralhados[index];
   });
-
-  sala.banco = embaralhados.slice(quantidadeJogadores); // guardado pra troca futura
 }
 
 function enviarEstadoDoJogo(sala, codigo) {
   sala.jogadores.forEach((jogadorAtual) => {
     const visaoDesseJogador = sala.jogadores.map((j) => ({
       nome: j.nome,
-      // a identidade só aparece se NÃO for o próprio jogador olhando
       identidade: j.id === jogadorAtual.id ? null : j.identidade,
       souEu: j.id === jogadorAtual.id,
     }));
