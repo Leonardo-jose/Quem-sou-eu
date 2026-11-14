@@ -2,7 +2,13 @@ const express = require("express");
 const http = require("http");
 const crypto = require("crypto");
 const { Server } = require("socket.io");
-const { registrarUsos, totalDePersonagens } = require("./banco");
+const {
+  registrarUsos,
+  buscarSugestoes,
+  sortearDoBanco,
+  gerarChave,
+  totalDePersonagens,
+} = require("./banco");
 
 const app = express();
 const server = http.createServer(app);
@@ -114,6 +120,43 @@ io.on("connection", (socket) => {
     enviarProgressoDosNomes(sala, codigo);
   });
 
+  // NOVO: sugestões do banco enquanto o jogador digita
+  socket.on("buscar-sugestoes", (texto) => {
+    const sala = salas[socket.data.codigo];
+    if (!sala || sala.jogoIniciado) return; // só quem está numa sala, e antes do início
+    if (excedeuFrequencia(socket)) return;
+
+    try {
+      const nomes = buscarSugestoes(String(texto || "").slice(0, 40));
+      socket.emit("sugestoes", nomes);
+    } catch (erro) {
+      console.error("Falha ao buscar sugestões:", erro.message);
+    }
+  });
+
+  // NOVO: o jogador pede um nome aleatório do banco
+  socket.on("sortear-do-banco", () => {
+    const sala = salas[socket.data.codigo];
+    if (!sala || sala.jogoIniciado) return;
+    if (excedeuFrequencia(socket)) return;
+
+    try {
+      // não sorteia um nome que já foi escolhido por alguém da sala
+      const jaNaSala = new Set(
+        sala.jogadores.filter((j) => j.nomeEscolhido).map((j) => gerarChave(j.nomeEscolhido))
+      );
+
+      const nome = sortearDoBanco(jaNaSala);
+      if (!nome) {
+        socket.emit("erro", "O banco ainda não tem nomes disponíveis. Escreva um você mesmo!");
+        return;
+      }
+      socket.emit("nome-sorteado", nome);
+    } catch (erro) {
+      console.error("Falha ao sortear do banco:", erro.message);
+    }
+  });
+
   socket.on("iniciar-jogo", () => {
     const codigo = socket.data.codigo;
     const sala = salas[codigo];
@@ -139,7 +182,7 @@ io.on("connection", (socket) => {
     distribuirNomes(sala);
     sala.jogoIniciado = true;
 
-    // NOVO: o banco se alimenta com os nomes que acabaram de ser usados.
+    // o banco se alimenta com os nomes que acabaram de ser usados.
     // O try/catch garante que, se o banco falhar, o jogo continua normalmente.
     try {
       registrarUsos(sala.jogadores.map((j) => j.nomeEscolhido));
@@ -220,6 +263,15 @@ server.listen(3000, () => {
   console.log("Servidor rodando em http://localhost:3000");
   console.log(`Banco de personagens: ${totalDePersonagens()} nomes guardados`);
 });
+
+// NOVO: ignora pedidos ao banco que chegam menos de 200ms depois do anterior,
+// para que ninguém consiga "raspar" o banco inteiro com um script em loop
+function excedeuFrequencia(socket) {
+  const agora = Date.now();
+  if (agora - (socket.data.ultimaBusca || 0) < 200) return true;
+  socket.data.ultimaBusca = agora;
+  return false;
+}
 
 function criarJogador(id, nome) {
   return {
