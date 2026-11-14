@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const crypto = require("crypto");
 const { Server } = require("socket.io");
+const { registrarUsos, totalDePersonagens } = require("./banco");
 
 const app = express();
 const server = http.createServer(app);
@@ -33,7 +34,7 @@ io.on("connection", (socket) => {
     socket.data.codigo = codigo;
 
     socket.emit("sala-criada", codigo);
-    // NOVO: o token vai SÓ para quem criou (socket.emit), nunca para a sala
+    // o token vai SÓ para quem criou (socket.emit), nunca para a sala
     socket.emit("sessao-iniciada", { token: jogador.token, codigo });
     io.to(codigo).emit("lista-jogadores-atualizada", listaPublica(salas[codigo]));
     enviarProgressoDosNomes(salas[codigo], codigo);
@@ -63,7 +64,7 @@ io.on("connection", (socket) => {
     enviarProgressoDosNomes(sala, codigo);
   });
 
-  // NOVO: uma conexão nova diz "eu sou o jogador do token X da sala Y"
+  // uma conexão nova diz "eu sou o jogador do token X da sala Y"
   socket.on("reconectar", (dados) => {
     const { token, codigo } = dados || {};
     const sala = salas[codigo];
@@ -137,6 +138,16 @@ io.on("connection", (socket) => {
 
     distribuirNomes(sala);
     sala.jogoIniciado = true;
+
+    // NOVO: o banco se alimenta com os nomes que acabaram de ser usados.
+    // O try/catch garante que, se o banco falhar, o jogo continua normalmente.
+    try {
+      registrarUsos(sala.jogadores.map((j) => j.nomeEscolhido));
+      console.log(`Banco atualizado: ${totalDePersonagens()} personagens guardados`);
+    } catch (erro) {
+      console.error("Falha ao salvar no banco:", erro.message);
+    }
+
     enviarEstadoDoJogo(sala, codigo);
   });
 
@@ -180,7 +191,7 @@ io.on("connection", (socket) => {
     enviarProgressoDosNomes(sala, codigo);
   });
 
-  // MUDOU: em vez de remover na hora, marca como desconectado e agenda a remoção
+  // em vez de remover na hora, marca como desconectado e agenda a remoção
   socket.on("disconnect", () => {
     console.log("Alguém saiu:", socket.id);
 
@@ -207,6 +218,7 @@ io.on("connection", (socket) => {
 
 server.listen(3000, () => {
   console.log("Servidor rodando em http://localhost:3000");
+  console.log(`Banco de personagens: ${totalDePersonagens()} nomes guardados`);
 });
 
 function criarJogador(id, nome) {
@@ -219,7 +231,7 @@ function criarJogador(id, nome) {
   };
 }
 
-// NOVO: o que pode sair pela rede. Sem token, sem identidade, sem nomeEscolhido.
+// O que pode sair pela rede. Sem token, sem identidade, sem nomeEscolhido.
 function listaPublica(sala) {
   return sala.jogadores.map((j) => ({
     id: j.id,
@@ -228,7 +240,6 @@ function listaPublica(sala) {
   }));
 }
 
-// NOVO: a lógica que antes ficava dentro do disconnect
 function removerJogador(codigo, token) {
   const sala = salas[codigo];
   if (!sala) return;
@@ -293,7 +304,7 @@ function enviarEstadoDoJogo(sala, codigo) {
       identidade: (j.id === jogadorAtual.id && !j.revelado) ? null : j.identidade,
       souEu: j.id === jogadorAtual.id,
       revelado: !!j.revelado,
-      conectado: j.conectado, // NOVO
+      conectado: j.conectado,
     }));
 
     io.to(jogadorAtual.id).emit("estado-do-jogo", visaoDesseJogador);
